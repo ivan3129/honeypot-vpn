@@ -51,7 +51,7 @@ class IKEv1Session:
             payloads.insert(0, message.PayloadHASH_1(hash_r))
         response = message.Message(self.peer_spi, self.my_spi, 0x10, exchange,
                                    enums.MsgFlag.NONE, message_id, payloads)
-        #print(repr(response))
+        print(repr(response))
         return response.to_bytes(crypto=crypto)
     def verify_hash(self, request):
         payload_hash = request.payloads.pop(0)
@@ -173,17 +173,19 @@ class IKEv1Session:
             if not request.payloads:
                 pass
             elif delete_payload and delete_payload.protocol == enums.Protocol.IKE:
-                self.state = State.DELETED
-                self.sessions.pop(self.my_spi)
+                print("deleted@111")
+                #self.state = State.DELETED
+                #self.sessions.pop(self.my_spi)
                 response_payloads.append(delete_payload)
                 message_id = request.message_id
             elif delete_payload:
+                print("deleted@222")
                 spis = []
                 for spi in delete_payload.spis:
                     child_sa = next((x for x in self.child_sa if x.spi_out == spi), None)
                     if child_sa:
-                        self.child_sa.remove(child_sa)
-                        self.sessions.pop(child_sa.spi_in)
+                        #self.child_sa.remove(child_sa)
+                        #self.sessions.pop(child_sa.spi_in)
                         spis.append(child_sa.spi_in)
                 response_payloads.append(message.PayloadDELETE_1(delete_payload.doi, delete_payload.protocol, spis))
                 message_id = request.message_id
@@ -253,7 +255,7 @@ class IKEv2Session:
     def response(self, exchange, payloads, *, crypto=None):
         response = message.Message(self.peer_spi, self.my_spi, 0x20, exchange,
                                    enums.MsgFlag.Response, self.peer_msgid, payloads)
-        #print(repr(response))
+        print(repr(response))
         self.peer_msgid += 1
         self.response_data = response.to_bytes(crypto=crypto)
         return self.response_data

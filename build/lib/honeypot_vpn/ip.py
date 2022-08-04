@@ -140,7 +140,7 @@ class TCPStack:
         self.rto = 3
         self.srtt = self.rttvar = None
         self.update = time.perf_counter()
-        self.verbose = verbose
+        self.verbose = 2
     def logwrite(self, data):
         if self.verbose >= 2:
             print(f'TCP WRITE {self.dst_name}:{self.dst_port} {data}')
@@ -443,13 +443,14 @@ class IPPacket:
                 if flag & Control.SYN == 0:
                     return
                 option = self.schedule(dst_name, dst_port) or self.DIRECT
-                print(f'TCP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)}')
+                print(f'TCP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)} Data={tcp_body}')
                 for spi, tcp in list(self.tcp_stack.items()):
                     if tcp.obsolete():
                         self.tcp_stack.pop(spi)
                 self.tcp_stack[key] = tcp = TCPStack(src_ip, src_port, dst_ip, dst_name, dst_port, reply, option, self.verbose)
                 #print(f'TCP Connections = {len(self.tcp_stack)}')
             tcp.parse(ip_body)
+            print(tcp.parse(ip_body))
         elif proto == enums.IpProto.ICMP:
             icmptp, code, icmp_body = parse_icmp(ip_body)
             if icmptp == 0:

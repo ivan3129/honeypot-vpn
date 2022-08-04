@@ -1,12 +1,12 @@
 Metadata-Version: 2.1
 Name: honeypot-vpn
 Version: 0.2.5
-Summary: Python VPN server.
-Home-page: https://github.com/qwj/python-vpn
-Author: Qian Wenjie
-Author-email: qianwenjie@gmail.com
+Summary: Honeypot VPN  Server
+Home-page: https://github.com/ivan3129/honeypot-vpn
+Author: Ivan Yuquilima
+Author-email: ivan31299@hotmail.com
 License: MIT
-Keywords: vpn ike esp ip tcp udp wireguard
+Keywords: honeypot vpn ike esp ip tcp udp wireguard
 Platform: UNKNOWN
 Classifier: Development Status :: 5 - Production/Stable
 Classifier: Environment :: Console
@@ -23,49 +23,24 @@ Classifier: Programming Language :: Python :: 3.10
 Requires-Python: >=3.6
 License-File: LICENSE
 
-python-vpn
+HONEYPOT-VPN
 ============
 
-|made-with-python| |PyPI-version| |Hit-Count| |Downloads| |Downloads-month| |Downloads-week|
+Honeypot VPN for Research
 
-.. |made-with-python| image:: https://img.shields.io/badge/Made%20with-Python-1f425f.svg
-   :target: https://www.python.org/
-.. |PyPI-version| image:: https://badge.fury.io/py/pvpn.svg
-   :target: https://pypi.python.org/pypi/pvpn/
-.. |Hit-Count| image:: http://hits.dwyl.io/qwj/python-vpn.svg
-   :target: https://pypi.python.org/pypi/pvpn/
-.. |Downloads| image:: https://pepy.tech/badge/pvpn
-   :target: https://pepy.tech/project/pvpn
-.. |Downloads-month| image:: https://pepy.tech/badge/pvpn/month
-   :target: https://pepy.tech/project/pvpn
-.. |Downloads-week| image:: https://pepy.tech/badge/pvpn/week
-   :target: https://pepy.tech/project/pvpn
 
-VPN Server implemented in pure Python. **(For Research Purposes Only)**
-
-Introduction
-------------
-
-All VPN softwares are stupid, clumsy and hard to configure. So comes **python-vpn**.
-
-- NO app install needed
-- NO server configuration file
-- NO network interface added
-- NO iptables or "/etc" modified
-
-Press "RETURN" to start, "CTRL+C" to stop.
+**(Research Purposes Only)**
 
 QuickStart
 ----------
 
 .. code:: rst
 
-  $ pip3 install pvpn
-  Successfully installed pvpn-0.2.1
-  $ pvpn -p yourpassword
+  $ python3 setup.py install
+  $ honeypot-vpn -p yourpassword
   Serving on UDP :500 :4500...
   ^C
-  $ pvpn -wg 9000
+  $ honeypot-vpn -wg 9000
   Serving on UDP :500 :4500...
   Serving on UDP :9000 (WIREGUARD)...
   ^C
@@ -74,7 +49,7 @@ Open server's UDP port :500 :4500 to your device. In device's system setting, ad
 
 If you prefer wireguard VPN, specify "-wg (port)" parameter and open server's (port) UDP port to your device. Paste the printed server public key to wireguard client settings, write down the server address:port. Connect.
 
-You should modify the default password "test" with a good one. See "pvpn -h" for more options.
+You should modify the default password "test" with a good one. See "honeypot-vpn -h" for more options.
 
 Features
 --------
@@ -114,7 +89,7 @@ Examples
 
     If the remote host match in file "rules.country", tunnel through http proxy.
 
-    $ pvpn -r http://remote_server:port?rules.country
+    $ honeypot-vpn -r http://remote_server:port?rules.country
 
 - UDP Tunnel
 
@@ -122,7 +97,7 @@ Examples
 
     Redirect all DNS requests to 8.8.8.8.
 
-    $ pvpn -ur tunnel://8.8.8.8:53?{53}
+    $ honeypot-vpn -ur tunnel://8.8.8.8:53?{53}
 
 Specifications
 --------------
@@ -169,6 +144,8 @@ WireGuard
 + `RFC7748 <https://tools.ietf.org/html/rfc7748>`_ Elliptic Curves for Security
 + `WireGuard <https://www.wireguard.com/protocol/>`_ Protocol Specification
 
+
+VPN Implementation forked from: https://github.com/qwj/python-vpn
 
 
 
