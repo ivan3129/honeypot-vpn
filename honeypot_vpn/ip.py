@@ -1,5 +1,6 @@
 import struct, ipaddress, os, asyncio, random, heapq, collections, time, enum
 from . import enums, dns
+import logging
 
 SMSS = 1350
 
@@ -115,7 +116,7 @@ class Control(enum.IntFlag):
     URG = 0x20
 
 class TCPStack:
-    def __init__(self, src_ip, src_port, dst_ip, dst_name, dst_port, reply, tcp_conn, verbose):
+    def __init__(self, src_ip, src_port, dst_ip, dst_name, dst_port, reply, tcp_conn, client_vpn_real_ip, verbose):
         self.src_ip = src_ip
         self.src_port = src_port
         self.dst_ip = dst_ip
@@ -141,12 +142,15 @@ class TCPStack:
         self.srtt = self.rttvar = None
         self.update = time.perf_counter()
         self.verbose = 2
+        self.client_vpn_real_ip = client_vpn_real_ip
+        self.logger = logging.getLogger('MainLogger')
     def logwrite(self, data):
+        self.logger.info(self.src_win)
         if self.verbose >= 2:
-            print(f'TCP WRITE {self.dst_name}:{self.dst_port} {data}')
+            self.logger.info(f'DATATYPE=REQUEST - PROTOCOL=TCP - VPN_CLIENT_IP={self.client_vpn_real_ip} - VPN_DESTINATION_IP={self.dst_name}:{self.dst_port} - DATA={data}')
     def logread(self, data):
         if self.verbose >= 2:
-            print(f'TCP READ {self.dst_name}:{self.dst_port} {data}')
+            self.logger.info(f'DATATYPE=RESPONSE - PROTOCOL=TCP - VPN_CLIENT_IP={self.client_vpn_real_ip} - VPN_DESTINATION_IP={self.dst_name}:{self.dst_port} - DATA={data}')
     def obsolete(self):
         return self.state == State.CLOSED or time.perf_counter() - self.update > 600
     def close(self):
@@ -382,6 +386,7 @@ class IPPacket:
         self.urserver = args.urserver
         self.DIRECT = args.DIRECT
         self.verbose = args.v if args.v else 0
+        self.logger = logging.getLogger('MainLogger')
     def schedule(self, host_name, port, udp=False):
         rserver = self.urserver if udp else self.rserver
         filter_cond = lambda o: o.alive and o.match_rule(host_name, port)
@@ -411,26 +416,28 @@ class IPPacket:
                     record = dns.DNSRecord.unpack(udp_body)
                     answer = self.dns_cache.query(record) if self.dns_cache else None
                     if self.verbose:
-                        print(f'DNS {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)} Query={record.q.qname}{" (Cached)" if answer else ""}')
+                        self.logger.info(f'DATATYPE=DNSQUERYREQUEST - PROTOCOL=UDP - VPN_CLIENT_IP={src_ip} - VPN_DESTINATION_IP={remote_id[0]}:{src_port} - DATA={option.logtext(dst_name, dst_port)} Query={record.q.qname}{" (Cached)" if answer else ""}')
                     if answer:
                         ip_body = make_udp(dst_port, src_port, answer.pack())
                         data = make_ipv4(proto, dst_ip, src_ip, ip_body)
                         reply(data)
                         return
                 except Exception as e:
-                    print(e)
+                    self.logger.error(e)
             else:
                 if self.verbose:
-                    print(f'UDP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)} Length={len(udp_body)}')
+                    self.logger.info('%s %s %s %s %s %s',proto, src_ip, dst_ip, ip_body,remote_id[0], dst_name)
+                    self.logger.info(f'DATATYPE=REQUEST - PROTOCOL=UDP - VPN_CLIENT_IP={dst_ip} - VPN_DESTINATION_IP={remote_id[0]}:{src_port} - DATA={option.logtext(dst_name, dst_port)} Length={len(udp_body)}')
             def udp_reply(udp_body):
                 if dst_port == 53:
                     record = dns.DNSRecord.unpack(udp_body)
                     self.dns_cache.answer(record) if self.dns_cache else None
                     if self.verbose:
-                        print(f'DNS {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port).replace("->","<-")} Answer=['+' '.join(f'{r.rname}->{r.rdata}' for r in record.rr)+']')
+                        self.logger.info(f'DATATYPE=DNSQUERYRESPONSE - PROTOCOL=UDP - VPN_CLIENT_IP={remote_id[0]} - VPN_DESTINATION_IP={dst_ip}:{dst_port} - DATA={option.logtext(dst_name, dst_port).replace("->","<-")} Answer=['+' '.join(f'{r.rname}->{r.rdata}' for r in record.rr)+']')
                 else:
                     if self.verbose:
-                        print(f'UDP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port).replace("->","<-")} Length={len(udp_body)}')
+                        self.logger.info('%s %s %s %s %s %s',proto, src_ip, dst_ip, ip_body,remote_id[0], dst_name)
+                        self.logger.info(f'DATATYPE=RESPONSE - PROTOCOL=UDP - VPN_CLIENT_IP={remote_id[0]} - VPN_DESTINATION_IP={dst_ip}:{dst_port} - DATA={option.logtext(dst_name, dst_port).replace("->","<-")} Length={len(udp_body)}')
                 ip_body = make_udp(dst_port, src_port, udp_body)
                 data = make_ipv4(proto, dst_ip, src_ip, ip_body)
                 reply(data)
@@ -438,29 +445,30 @@ class IPPacket:
         elif proto == enums.IpProto.TCP:
             src_port, dst_port, flag, tcp_body = parse_tcp(ip_body)
             key = (remote_id[0], remote_id[1], src_port)
+            self.logger.info(key)
             tcp = self.tcp_stack.get(key)
             if tcp is None:
                 if flag & Control.SYN == 0:
                     return
                 option = self.schedule(dst_name, dst_port) or self.DIRECT
-                print(f'TCP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)} Data={tcp_body}')
+                self.logger.info(f'TCP {remote_id[0]}:{src_port}{option.logtext(dst_name, dst_port)} Data={tcp_body}')
                 for spi, tcp in list(self.tcp_stack.items()):
                     if tcp.obsolete():
                         self.tcp_stack.pop(spi)
-                self.tcp_stack[key] = tcp = TCPStack(src_ip, src_port, dst_ip, dst_name, dst_port, reply, option, self.verbose)
-                #print(f'TCP Connections = {len(self.tcp_stack)}')
+                self.tcp_stack[key] = tcp = TCPStack(src_ip, src_port, dst_ip, dst_name, dst_port, reply, option, remote_id[0], self.verbose)
+                self.logger.info(f'TCP Connections = {len(self.tcp_stack)}')
             tcp.parse(ip_body)
-            print(tcp.parse(ip_body))
+            self.logger.info(tcp.parse(ip_body))
         elif proto == enums.IpProto.ICMP:
             icmptp, code, icmp_body = parse_icmp(ip_body)
             if icmptp == 0:
                 tid, seq = struct.unpack('>HH', ip_body[4:8])
                 if self.verbose:
-                    print(f'PING {remote_id[0]} -> {dst_name} Id={tid} Seq={seq} Data={icmp_body}')
+                    self.logger.info(f'DATATYPE=PING - PROTOCOL=ICMP - VPN_CLIENT_IP={remote_id[0]} -> {dst_name} Id={tid} Seq={seq} Data={icmp_body}')
             elif icmptp == 8:
                 tid, seq = struct.unpack('>HH', ip_body[4:8])
                 if self.verbose:
-                    print(f'ECHO {remote_id[0]} -> {dst_name} Id={tid} Seq={seq} Data={icmp_body}')
+                    self.logger.info(f'DATATYPE=PING - PROTOCOL=ICMP - VPN_CLIENT_IP={remote_id[0]} -> {dst_name} Id={tid} Seq={seq} Data={icmp_body}')
                 # NEED ROOT PRIVILEGE TO SEND ICMP PACKET
                 # a = socket.socket(socket.AF_INET, socket.SOCK_RAW, proto)
                 # a.sendto(icmp_body, (dst_name, 1))
@@ -469,18 +477,18 @@ class IPPacket:
                 eproto, esrc_ip, edst_ip, eip_body = parse_ipv4(icmp_body)
                 eport = int.from_bytes(eip_body[2:4], 'big')
                 if self.verbose:
-                    print(f'ICMP {remote_id[0]} -> {dst_name} {eproto.name} :{eport} Denied')
+                    self.logger.info(f'DATATYPE=PING - PROTOCOL=ICMP - VPN_CLIENT_IP={remote_id[0]} -> {dst_name} {eproto.name} :{eport} Denied')
             else:
                 if self.verbose:
-                    print(f'ICMP {remote_id[0]} -> {dst_name} Data={ip_body}')
+                    self.logger.info(f'DATATYPE=PING - PROTOCOL=ICMP - VPN_CLIENT_IP={remote_id[0]} -> {remote_id[0]} -> {dst_name} Data={ip_body}')
         else:
-            print(f'{enums.IpProto(proto).name} -> {dst_name} Data={data}')
+            self.logger.info(f'{enums.IpProto(proto).name} -> {dst_name} Data={data}')
     def handle_l2tp(self, remote_id, data, reply):
         src_port, dst_port, udp_body = parse_udp(data)
         tunnel_id, session_id, ns, nr, l2tp_body = parse_l2tp(udp_body)
-        # print(tunnel_id, session_id, ns, nr, l2tp_body)
+        self.logger.info('%s %s %s %s %s',tunnel_id, session_id, ns, nr, l2tp_body)
         def reply_l2tp(l2tp_body):
-            # print('reply', l2tp_body)
+            self.logger.info('%s %s','reply', l2tp_body)
             ns_nr = type(l2tp_body) is dict
             udp_body = make_l2tp(tunnel_id, session_id, nr if ns_nr else None, ns+1 if ns_nr else None, l2tp_body)
             ip_body = make_udp(dst_port, src_port, udp_body)
@@ -557,6 +565,6 @@ class IPPacket:
             if dst_port == 1701:
                 self.handle_l2tp(remote_id, data, reply)
             else:
-                print(f'UDP Unhandled Port={dst_port}. Data={udp_body}')
+                self.logger.info(f'UDP Unhandled Port={dst_port}. Data={udp_body}')
         else:
-            print(f'{enums.IpProto(header).name} Unhandled Protocol. Data={data}')
+            self.logger.info(f'{enums.IpProto(header).name} Unhandled Protocol. Data={data}')

@@ -24,6 +24,12 @@ setup(
     python_requires     = '>=3.6',
     keywords            = find_value('keywords'),
     packages            = ['honeypot_vpn'],
+    package_data= {
+        "honeypot_vpn": [
+        "logs/*",
+        "logger.cfg"
+        ]
+    },
     classifiers         = [
         'Development Status :: 5 - Production/Stable',
         'Environment :: Console',

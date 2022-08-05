@@ -1,4 +1,5 @@
 LICENSE
+MANIFEST.in
 README.rst
 setup.py
 honeypot-vpn.egg-info/PKG-INFO
@@ -14,5 +15,7 @@ honeypot_vpn/crypto.py
 honeypot_vpn/dns.py
 honeypot_vpn/enums.py
 honeypot_vpn/ip.py
+honeypot_vpn/logger.cfg
 honeypot_vpn/message.py
 honeypot_vpn/server.py
+honeypot_vpn/logs/readme.txt

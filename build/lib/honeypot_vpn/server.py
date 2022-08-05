@@ -2,6 +2,10 @@ import argparse, asyncio, io, os, enum, struct, collections, hashlib, ipaddress,
 import pproxy
 from . import enums, message, crypto, ip
 from .__doc__ import *
+import logging
+import logging.config
+from os import path
+from datetime import datetime
 
 class State(enum.Enum):
     INITIAL = 0
@@ -24,6 +28,7 @@ class ChildSa:
         self.msgid_out = 1
         self.msgwin_in = set()
         self.child = None
+        self.logger = logging.getLogger()
     def incr_msgid_in(self):
         self.msgid_in += 1
         while self.msgid_in in self.msgwin_in:
@@ -43,6 +48,7 @@ class IKEv1Session:
         self.child_sa = []
         self.state = State.INITIAL
         self.sessions[self.my_spi] = self
+        self.logger = logging.getLogger()
     def response(self, exchange, payloads, message_id=0, *, crypto=None, hashmsg=None):
         if hashmsg:
             message_id = message_id or random.randrange(1<<32)
@@ -51,7 +57,7 @@ class IKEv1Session:
             payloads.insert(0, message.PayloadHASH_1(hash_r))
         response = message.Message(self.peer_spi, self.my_spi, 0x10, exchange,
                                    enums.MsgFlag.NONE, message_id, payloads)
-        print(repr(response))
+        self.logger.info(repr(response))
         return response.to_bytes(crypto=crypto)
     def verify_hash(self, request):
         payload_hash = request.payloads.pop(0)
@@ -67,7 +73,7 @@ class IKEv1Session:
         return self.response(enums.Exchange.TRANSACTION_1, response_payloads, crypto=self.crypto, hashmsg=True)
     def process(self, request, stream, remote_id, reply):
         request.parse_payloads(stream, crypto=self.crypto)
-        print(repr(request))
+        self.logger.info(repr(request))
         if remote_id not in self.all_child_sa:
             self.all_child_sa[remote_id] = self.child_sa
         elif self.all_child_sa[remote_id] != self.child_sa:
@@ -173,13 +179,13 @@ class IKEv1Session:
             if not request.payloads:
                 pass
             elif delete_payload and delete_payload.protocol == enums.Protocol.IKE:
-                print("deleted@111")
+                self.logger.info("deleted@111")
                 #self.state = State.DELETED
                 #self.sessions.pop(self.my_spi)
                 response_payloads.append(delete_payload)
                 message_id = request.message_id
             elif delete_payload:
-                print("deleted@222")
+                self.logger.info("deleted@222")
                 spis = []
                 for spi in delete_payload.spis:
                     child_sa = next((x for x in self.child_sa if x.spi_out == spi), None)
@@ -222,6 +228,7 @@ class IKEv2Session:
         self.response_data = None
         self.child_sa = []
         self.sessions[self.my_spi] = self
+        self.logger = logging.getLogger()
     def create_key(self, ike_proposal, shared_secret, old_sk_d=None):
         prf = crypto.Prf(ike_proposal.get_transform(enums.Transform.PRF).id)
         integ = crypto.Integrity(ike_proposal.get_transform(enums.Transform.INTEG).id)
@@ -255,7 +262,7 @@ class IKEv2Session:
     def response(self, exchange, payloads, *, crypto=None):
         response = message.Message(self.peer_spi, self.my_spi, 0x20, exchange,
                                    enums.MsgFlag.Response, self.peer_msgid, payloads)
-        print(repr(response))
+        self.logger.info(repr(response))
         self.peer_msgid += 1
         self.response_data = response.to_bytes(crypto=crypto)
         return self.response_data
@@ -266,7 +273,7 @@ class IKEv2Session:
         elif request.message_id != self.peer_msgid:
             return
         request.parse_payloads(stream, crypto=self.peer_crypto)
-        print(repr(request))
+        self.logger.info(repr(request))
         if request.exchange == enums.Exchange.IKE_SA_INIT:
             assert self.state == State.INITIAL
             self.peer_nonce = request.get_payload(enums.Payload.NONCE).nonce
@@ -380,6 +387,7 @@ class IKE_500(asyncio.DatagramProtocol):
     def __init__(self, args, sessions):
         self.args = args
         self.sessions = sessions
+        self.logger = logging.getLogger()
     def connection_made(self, transport):
         self.transport = transport
     def datagram_received(self, data, addr, *, response_header=b''):
@@ -399,6 +407,7 @@ class SPE_4500(IKE_500):
     def __init__(self, args, sessions):
         IKE_500.__init__(self, args, sessions)
         self.ippacket = ip.IPPacket(args)
+        self.logger = logging.getLogger()
     def datagram_received(self, data, addr):
         spi = data[:4]
         if spi == b'\xff':
@@ -436,7 +445,7 @@ class SPE_4500(IKE_500):
                 return True
             self.ippacket.handle(addr[:2], header, data, reply)
         else:
-            print('unknown packet', data, addr)
+            self.logger.info('unknown packet', data, addr)
 
 class WIREGUARD(asyncio.DatagramProtocol):
     def __init__(self, args):
@@ -448,9 +457,10 @@ class WIREGUARD(asyncio.DatagramProtocol):
         self.keys = {}
         self.index_generators = {}
         self.sender_index_generator = itertools.count()
-        print('======== WIREGUARD SETTING ========')
-        print('PublicKey:', base64.b64encode(self.public_key).decode())
-        print('===================================')
+        self.logger = logging.getLogger()
+        self.logger.info('======== WIREGUARD SETTING ========')
+        self.logger.info('PublicKey:', base64.b64encode(self.public_key).decode())
+        self.logger.info('===================================')
     def connection_made(self, transport):
         self.transport = transport
     def datagram_received(self, data, addr):
@@ -491,7 +501,7 @@ class WIREGUARD(asyncio.DatagramProtocol):
             msg = struct.pack('<III32s16s', 2, index, sender_index, ephemeral_public, encrypted_nothing)
             msg = msg + MAC(HASH(b"mac1----" + static_public), msg) + b'\x00'*16
             self.transport.sendto(msg, addr)
-            print('login', addr, sender_index)
+            self.logger.info('login', addr, sender_index)
 
             temp = HMAC(chaining_key, b"")
             receiving_key = HMAC(temp, b"\x01")
@@ -532,16 +542,24 @@ def main():
     sessions = {}
     transport1, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: IKE_500(args, sessions), ('0.0.0.0', 500)))
     transport2, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: SPE_4500(args, sessions), ('0.0.0.0', 4500)))
-    print('Serving on UDP :500 :4500...')
+    log_file_path = path.join(path.dirname(path.abspath(__file__)), 'logger.cfg')
+    logging.config.fileConfig(log_file_path)
+    logger = logging.getLogger('MainLogger')
+    fh = logging.FileHandler(path.join(path.dirname(path.abspath(__file__)), 'logs/{:%Y-%m-%d}.log'.format(datetime.now())), mode='a')
+    formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(lineno)04d | %(message)s')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.info('LOG FILE:' + path.join(path.dirname(path.abspath(__file__)), 'logs/{:%Y-%m-%d}.log'.format(datetime.now())))
+    logger.info('Serving on UDP :500 :4500...')
     if args.wireguard:
         transport3, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: WIREGUARD(args), ('0.0.0.0', args.wireguard)))
-        print(f'Serving on UDP :{args.wireguard} (WIREGUARD)...')
+        logger.info(f'Serving on UDP :{args.wireguard} (WIREGUARD)...')
     else:
         transport3 = None
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        print('exit')
+        logger.info('exit from Honeypot bye')
     for task in asyncio.all_tasks(loop) if hasattr(asyncio, 'all_tasks') else asyncio.Task.all_tasks():
         task.cancel()
     transport1.close()
