@@ -2,10 +2,11 @@ import struct, io, collections, os, random, ipaddress
 from . import enums
 
 class Payload:
-    def __init__(self, type, critical=False):
+    def __init__(self, type, critical=False, data=None):
         self.type = enums.Payload(type)
         self.critical = critical
-        self.data = None
+        self.data = data
+
     @classmethod
     def parse(cls, type, critical, stream, length):
         self = cls.__new__(cls)
@@ -522,15 +523,31 @@ class Message:
     def parse(cls, stream):
         header = struct.unpack('>8s8s4B2L', stream.read(28))
         return Message(header[0], header[1], header[3], header[4], header[5], header[6], first_payload=header[2])
+    def unpack( self, fmt, stream):
+
+        size = struct.calcsize(fmt)               
+        buf = stream.read(size)
+        return struct.unpack(fmt, buf)
+
+
     def parse_payloads(self, stream, *, crypto=None):
         if self.flag & enums.MsgFlag.Encryption:
             stream = io.BytesIO(crypto.decrypt_1(stream.read(), self.message_id))
         next_payload = self.first_payload
         while next_payload:
+            print("NEEEEEEEEEEEEXT656565656", next_payload)
             payload_id = next_payload
-            next_payload, critical, length = struct.unpack('>BBH', stream.read(4))
-            critical = bool(critical >> 7)
-            payload = PayloadClass.get(payload_id, Payload).parse(payload_id, critical, stream, length-4)
+            try:
+                next_payload, critical, length = self.unpack('>BBH',stream)
+                critical = bool(critical >> 7)
+                payload = PayloadClass.get(payload_id, Payload).parse(payload_id, critical, stream, length-4)
+            except Exception as e:
+                print(e)
+                next_payload = enums.Payload.NONE
+                payload  =  Payload(enums.Payload.HASH_1,  False, "")
+                
+            
+            print("paeeeyload11111............",payload)
             if payload_id == enums.Payload.SK:
                 if crypto is not None:
                     crypto.verify_checksum(stream.getvalue())
@@ -549,6 +566,8 @@ class Message:
                 next_payload = payloads[idx+1].type
             else:
                 next_payload = enums.Payload.NONE
+            print("El payload....")
+            print(payload)
             data.extend(struct.pack('>BBH', next_payload, 0x80 if payload.critical else 0x00, len(payload_data) + 4))
             data.extend(payload_data)
         return data
@@ -577,3 +596,4 @@ class Message:
         return next((x for x in self.payloads if x.type == payload_type), None)
     def get_payload_notify(self, notify_id):
         return next((x for x in self.payloads if x.type == enums.Payload.NOTIFY and x.notify == notify_id), None)
+

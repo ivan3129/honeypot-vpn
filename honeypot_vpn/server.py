@@ -1,11 +1,11 @@
 import argparse, asyncio, io, os, enum, struct, collections, hashlib, ipaddress, socket, random, base64, itertools, hmac
 import pproxy
-from . import enums, message, crypto, ip
+from . import enums, message, crypto, ip, honeypotlogger
 from .__doc__ import *
 import logging
-import logging.config
 from os import path
 from datetime import datetime
+from .logparser import logparser
 
 class State(enum.Enum):
     INITIAL = 0
@@ -28,7 +28,7 @@ class ChildSa:
         self.msgid_out = 1
         self.msgwin_in = set()
         self.child = None
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('HoneypotVPNLogger')
     def incr_msgid_in(self):
         self.msgid_in += 1
         while self.msgid_in in self.msgwin_in:
@@ -48,8 +48,8 @@ class IKEv1Session:
         self.child_sa = []
         self.state = State.INITIAL
         self.sessions[self.my_spi] = self
-        self.logger = logging.getLogger()
-    def response(self, exchange, payloads, message_id=0, *, crypto=None, hashmsg=None):
+        self.logger = logging.getLogger('HoneypotVPNLogger')
+    def response(self, addr, exchange, payloads, message_id=0, *, crypto=None, hashmsg=None):
         if hashmsg:
             message_id = message_id or random.randrange(1<<32)
             buf = (b'' if hashmsg is True else hashmsg) + message.Message.encode_payloads(payloads)
@@ -57,24 +57,28 @@ class IKEv1Session:
             payloads.insert(0, message.PayloadHASH_1(hash_r))
         response = message.Message(self.peer_spi, self.my_spi, 0x10, exchange,
                                    enums.MsgFlag.NONE, message_id, payloads)
-        self.logger.info(repr(response))
+        msg, extradata = logparser(repr(response), request_type='VPN RESPONSE', protocol='TCP',vpn_client_ip=addr[0] )
+        self.logger.info(msg, extra=extradata) 
         return response.to_bytes(crypto=crypto)
     def verify_hash(self, request):
         payload_hash = request.payloads.pop(0)
-        self.logger.info(repr(request))
+        msg, extradata = logparser(repr(request))
+        self.logger.info(msg, extra=extradata)
         assert payload_hash.type == enums.Payload.HASH_1
         hash_i = self.crypto.prf.prf(self.skeyid_a, request.message_id.to_bytes(4, 'big') + message.Message.encode_payloads(request.payloads))
         assert hash_i == payload_hash.data
-    def xauth_init(self):
+    def xauth_init(self, addr):
         attrs = { enums.CPAttrType.XAUTH_TYPE: 0,
                   enums.CPAttrType.XAUTH_USER_NAME: b'',
                   enums.CPAttrType.XAUTH_USER_PASSWORD: b'',
                 }
         response_payloads = [message.PayloadCP_1(enums.CFGType.CFG_REQUEST, attrs)]
-        return self.response(enums.Exchange.TRANSACTION_1, response_payloads, crypto=self.crypto, hashmsg=True)
-    def process(self, request, stream, remote_id, reply):
+        return self.response(addr, enums.Exchange.TRANSACTION_1, response_payloads, crypto=self.crypto, hashmsg=True)
+    def process(self, request, stream, addr, reply):
         request.parse_payloads(stream, crypto=self.crypto)
-        self.logger.info(repr(request))
+        remote_id = addr[0]
+        msg, extradata = logparser(repr(request), request_type='VPN REQUEST', protocol='TCP',vpn_client_ip=remote_id )
+        self.logger.info(msg, extra=extradata)
         if remote_id not in self.all_child_sa:
             self.all_child_sa[remote_id] = self.child_sa
         elif self.all_child_sa[remote_id] != self.child_sa:
@@ -87,7 +91,7 @@ class IKEv1Session:
             self.auth_mode = self.transform[enums.TransformAttr.AUTH]
             del request_payload_sa.proposals[0].transforms[1:]
             response_payloads = request.payloads
-            reply(self.response(enums.Exchange.IDENTITY_1, response_payloads))
+            reply(self.response(addr, enums.Exchange.IDENTITY_1, response_payloads))
             self.state = State.SA_SENT
         elif request.exchange == enums.Exchange.IDENTITY_1 and request.get_payload(enums.Payload.KE_1):
             assert self.state == State.SA_SENT
@@ -104,21 +108,27 @@ class IKEv1Session:
             self.skeyid_e = prf.prf(self.skeyid, self.skeyid_a+self.shared_secret+self.peer_spi+self.my_spi+bytes([2]))
             iv = prf.hasher(self.peer_public_key+self.my_public_key).digest()[:cipher.block_size]
             self.crypto = crypto.Crypto(cipher, self.skeyid_e[:cipher.key_size], prf=prf, iv=iv)
-            reply(self.response(enums.Exchange.IDENTITY_1, response_payloads))
+            reply(self.response(addr, enums.Exchange.IDENTITY_1, response_payloads))
             self.state = State.KE_SENT
         elif request.exchange == enums.Exchange.IDENTITY_1 and request.get_payload(enums.Payload.ID_1):
             assert self.state == State.KE_SENT
             payload_id = request.get_payload(enums.Payload.ID_1)
             prf = self.crypto.prf
             hash_i = prf.prf(self.skeyid, self.peer_public_key+self.my_public_key+self.peer_spi+self.my_spi+self.sa_bytes+payload_id.to_bytes())
+            if hash_i != request.get_payload(enums.Payload.HASH_1).data:
+                msg, extradata = logparser(repr(request), request_type='VPN AUTH FAILED', protocol='TCP',vpn_client_ip=remote_id )
+                self.logger.info(msg, extra=extradata)
+            else:
+                msg, extradata = logparser(repr(request), request_type='VPN AUTH SUCCESS', protocol='TCP',vpn_client_ip=remote_id )
+                self.logger.info(msg, extra=extradata)
             assert hash_i == request.get_payload(enums.Payload.HASH_1).data, 'Authentication Failed'
             response_payload_id = message.PayloadID_1(enums.IDType.ID_FQDN, f'{__title__}-{__version__}'.encode())
             hash_r = prf.prf(self.skeyid, self.my_public_key+self.peer_public_key+self.my_spi+self.peer_spi+self.sa_bytes+response_payload_id.to_bytes())
             response_payloads = [response_payload_id, message.PayloadHASH_1(hash_r)]
-            reply(self.response(enums.Exchange.IDENTITY_1, response_payloads, crypto=self.crypto))
+            reply(self.response(addr, enums.Exchange.IDENTITY_1, response_payloads, crypto=self.crypto))
             self.state = State.HASH_SENT
             if self.auth_mode == enums.AuthId_1.XAUTHInitPreShared:
-                reply(self.xauth_init())
+                reply(self.xauth_init(addr))
         elif request.exchange == enums.Exchange.TRANSACTION_1:
             self.verify_hash(request)
             payload_cp = request.get_payload(enums.Payload.CP_1)
@@ -137,7 +147,7 @@ class IKEv1Session:
                 return
             else:
                 raise Exception('Unknown CP Exchange')
-            reply(self.response(enums.Exchange.TRANSACTION_1, response_payloads, request.message_id, crypto=self.crypto, hashmsg=True))
+            reply(self.response(addr, enums.Exchange.TRANSACTION_1, response_payloads, request.message_id, crypto=self.crypto, hashmsg=True))
         elif request.exchange == enums.Exchange.QUICK_1 and len(request.payloads) == 1:
             assert request.payloads[0].type == enums.Payload.HASH_1
             assert self.state == State.CHILD_SA_SENT
@@ -154,7 +164,7 @@ class IKEv1Session:
             del chosen_proposal.transforms[1:]
             peer_spi = chosen_proposal.spi
             chosen_proposal.spi = my_spi = os.urandom(4)
-            reply(self.response(enums.Exchange.QUICK_1, request.payloads, request.message_id, crypto=self.crypto, hashmsg=peer_nonce))
+            reply(self.response(addr, enums.Exchange.QUICK_1, request.payloads, request.message_id, crypto=self.crypto, hashmsg=peer_nonce))
 
             transform = chosen_proposal.transforms[0].values
             cipher = crypto.Cipher(chosen_proposal.transforms[0].id, transform[enums.ESPAttr.KEY_LENGTH])
@@ -206,11 +216,15 @@ class IKEv1Session:
                 response_payloads.append(notify_payload)
                 message_id = request.message_id
             else:
+                msg, extradata = logparser(f'unhandled informational {request!r}')
+                self.logger.error(msg, extra=extradata)
                 raise Exception(f'unhandled informational {request!r}')
-            reply(self.response(enums.Exchange.INFORMATIONAL_1, response_payloads, message_id, crypto=self.crypto, hashmsg=True))
+            reply(self.response(addr, enums.Exchange.INFORMATIONAL_1, response_payloads, message_id, crypto=self.crypto, hashmsg=True))
             #if notify_payload and notify_payload.notify == enums.Notify.INITIAL_CONTACT_1:
             #    reply(self.xauth_init())
         else:
+            msg, extradata = logparser(f'unhandled request {request!r}')
+            self.logger.error(msg, extra=extradata)
             raise Exception(f'unhandled request {request!r}')
 
 class IKEv2Session:
@@ -229,7 +243,7 @@ class IKEv2Session:
         self.response_data = None
         self.child_sa = []
         self.sessions[self.my_spi] = self
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('HoneypotVPNLogger')
     def create_key(self, ike_proposal, shared_secret, old_sk_d=None):
         prf = crypto.Prf(ike_proposal.get_transform(enums.Transform.PRF).id)
         integ = crypto.Integrity(ike_proposal.get_transform(enums.Transform.INTEG).id)
@@ -260,21 +274,25 @@ class IKEv2Session:
     def auth_data(self, message_data, nonce, payload, sk_p):
         prf = self.peer_crypto.prf.prf
         return prf(prf(self.args.passwd.encode(), b'Key Pad for IKEv2'), message_data+nonce+prf(sk_p, payload.to_bytes()))
-    def response(self, exchange, payloads, *, crypto=None):
+    def response(self, addr, exchange, payloads, *, crypto=None):
         response = message.Message(self.peer_spi, self.my_spi, 0x20, exchange,
                                    enums.MsgFlag.Response, self.peer_msgid, payloads)
-        self.logger.info(repr(response))
+        msg, extradata = logparser(repr(response), request_type='VPN RESPONSE', protocol='TCP',vpn_client_ip=addr[:2] )
+        self.logger.info(msg, extra=extradata)     
         self.peer_msgid += 1
         self.response_data = response.to_bytes(crypto=crypto)
         return self.response_data
-    def process(self, request, stream, remote_id, reply):
+    def process(self, request, stream, addr, reply):
         if request.message_id == self.peer_msgid - 1:
             reply(self.response_data)
             return
         elif request.message_id != self.peer_msgid:
             return
         request.parse_payloads(stream, crypto=self.peer_crypto)
-        self.logger.info(repr(request))
+        remote_id = addr[:2]
+        print("****************************************", repr(addr))
+        msg, extradata = logparser(repr(request), request_type='VPN REQUEST', protocol='TCP',vpn_client_ip=remote_id )
+        self.logger.info(msg, extra=extradata)
         if request.exchange == enums.Exchange.IKE_SA_INIT:
             assert self.state == State.INITIAL
             self.peer_nonce = request.get_payload(enums.Payload.NONCE).nonce
@@ -282,7 +300,7 @@ class IKEv2Session:
             payload_ke = request.get_payload(enums.Payload.KE)
             prefered_dh = chosen_proposal.get_transform(enums.Transform.DH).id
             if payload_ke.dh_group != prefered_dh or payload_ke.ke_data[0] == 0:
-                reply(self.response(enums.Exchange.IKE_SA_INIT, [ message.PayloadNOTIFY(0, enums.Notify.INVALID_KE_PAYLOAD, b'', prefered_dh.to_bytes(2, 'big'))]))
+                reply(self.response(addr, enums.Exchange.IKE_SA_INIT, [ message.PayloadNOTIFY(0, enums.Notify.INVALID_KE_PAYLOAD, b'', prefered_dh.to_bytes(2, 'big'))]))
                 return
             public_key, shared_secret = crypto.DiffieHellman(payload_ke.dh_group, payload_ke.ke_data)
             self.create_key(chosen_proposal, shared_secret)
@@ -291,7 +309,7 @@ class IKEv2Session:
                                   message.PayloadKE(payload_ke.dh_group, public_key),
                                   message.PayloadNOTIFY(0, enums.Notify.NAT_DETECTION_DESTINATION_IP, b'', os.urandom(20)),
                                   message.PayloadNOTIFY(0, enums.Notify.NAT_DETECTION_SOURCE_IP, b'', os.urandom(20)) ]
-            reply(self.response(enums.Exchange.IKE_SA_INIT, response_payloads))
+            reply(self.response(addr, enums.Exchange.IKE_SA_INIT, response_payloads))
             self.state = State.SA_SENT
             self.request_data = stream.getvalue()
         elif request.exchange == enums.Exchange.IKE_AUTH:
@@ -320,7 +338,7 @@ class IKEv2Session:
                 attrs = { enums.CPAttrType.INTERNAL_IP4_ADDRESS: ipaddress.ip_address('1.0.0.1').packed,
                           enums.CPAttrType.INTERNAL_IP4_DNS: ipaddress.ip_address(self.args.dns).packed, }
                 response_payloads.append(message.PayloadCP(enums.CFGType.CFG_REPLY, attrs))
-            reply(self.response(enums.Exchange.IKE_AUTH, response_payloads, crypto=self.my_crypto))
+            reply(self.response(addr, enums.Exchange.IKE_AUTH, response_payloads, crypto=self.my_crypto))
             self.state = State.ESTABLISHED
         elif request.exchange == enums.Exchange.INFORMATIONAL:
             assert self.state == State.ESTABLISHED
@@ -346,7 +364,7 @@ class IKEv2Session:
                 response_payloads.append(message.PayloadDELETE(delete_payload.protocol, spis))
             else:
                 raise Exception(f'unhandled informational {request!r}')
-            reply(self.response(enums.Exchange.INFORMATIONAL, response_payloads, crypto=self.my_crypto))
+            reply(self.response(addr, enums.Exchange.INFORMATIONAL, response_payloads, crypto=self.my_crypto))
         elif request.exchange == enums.Exchange.CREATE_CHILD_SA:
             assert self.state == State.ESTABLISHED
             chosen_proposal = request.get_payload(enums.Payload.SA).get_proposal(enums.EncrId.ENCR_AES_CBC)
@@ -378,7 +396,7 @@ class IKEv2Session:
                 response_payloads = [ message.PayloadSA([chosen_proposal]),
                                       message.PayloadNONCE(child.my_nonce),
                                       message.PayloadKE(payload_ke.dh_group, public_key) ]
-            reply(self.response(enums.Exchange.CREATE_CHILD_SA, response_payloads, crypto=self.my_crypto))
+            reply(self.response(addr, enums.Exchange.CREATE_CHILD_SA, response_payloads, crypto=self.my_crypto))
         else:
             raise Exception(f'unhandled request {request!r}')
 
@@ -388,7 +406,7 @@ class IKE_500(asyncio.DatagramProtocol):
     def __init__(self, args, sessions):
         self.args = args
         self.sessions = sessions
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('HoneypotVPNLogger')
     def connection_made(self, transport):
         self.transport = transport
     def datagram_received(self, data, addr, *, response_header=b''):
@@ -402,13 +420,13 @@ class IKE_500(asyncio.DatagramProtocol):
             session = self.sessions[request.spi_r]
         else:
             return
-        session.process(request, stream, addr[:2], lambda response: self.transport.sendto(response_header+response, addr))
+        session.process(request, stream, addr, lambda response: self.transport.sendto(response_header+response, addr))
 
 class SPE_4500(IKE_500):
     def __init__(self, args, sessions):
         IKE_500.__init__(self, args, sessions)
         self.ippacket = ip.IPPacket(args)
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('HoneypotVPNLogger')
     def datagram_received(self, data, addr):
         spi = data[:4]
         if spi == b'\xff':
@@ -458,7 +476,7 @@ class WIREGUARD(asyncio.DatagramProtocol):
         self.keys = {}
         self.index_generators = {}
         self.sender_index_generator = itertools.count()
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('HoneypotVPNLogger')
         self.logger.info('======== WIREGUARD SETTING ========')
         self.logger.info('PublicKey:', base64.b64encode(self.public_key).decode())
         self.logger.info('===================================')
@@ -535,23 +553,28 @@ def main():
     parser.add_argument('-p', dest='passwd', default='test', help='password (default: test)')
     parser.add_argument('-dns', dest='dns', default='1.1.1.1', help='dns server (default: 1.1.1.1)')
     parser.add_argument('-nc', dest='nocache', default=None, action='store_true', help='do not cache dns (default: off)')
+    parser.add_argument('-wl', dest='writelogs', default='yes', action='store_true', help='write logs into a file yes/no (default: yes)')
+    parser.add_argument('-es', dest='useelasticsearch', default='yes', action='store_true', help='send logs to elastic search (default: yes)')
+    parser.add_argument('-logstash', dest='logstashhost', default='localhost:5000', action='store_true', help='logstash server host:port (default: localhost:5000)')
     parser.add_argument('-v', dest='v', action='count', help='print verbose output')
     parser.add_argument('--version', action='version', version=f'{__title__} {__version__}')
     args = parser.parse_args()
     args.DIRECT = pproxy.DIRECT
+    writeFileLogs = args.writelogs == 'yes'
+    sendToElasticSearch = args.useelasticsearch == 'yes'
+    logstashHost = None
+    if sendToElasticSearch:
+    	logstashHost = args.logstashhost
+    honeypotLogger = honeypotlogger.HoneypotLogger(args)
+    honeypotLogger.configureLogger(writeFileLogs, sendToElasticSearch, logstashHost)
+    logger = logging.getLogger('HoneypotVPNLogger')
+    print(args)
     loop = asyncio.get_event_loop()
     sessions = {}
     transport1, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: IKE_500(args, sessions), ('0.0.0.0', 500)))
     transport2, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: SPE_4500(args, sessions), ('0.0.0.0', 4500)))
-    log_file_path = path.join(path.dirname(path.abspath(__file__)), 'logger.cfg')
-    logging.config.fileConfig(log_file_path)
-    logger = logging.getLogger('MainLogger')
-    fh = logging.FileHandler(path.join(path.dirname(path.abspath(__file__)), 'logs/{:%Y-%m-%d}.log'.format(datetime.now())), mode='a')
-    formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(lineno)04d | %(message)s')
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-    logger.info('LOG FILE:' + path.join(path.dirname(path.abspath(__file__)), 'logs/{:%Y-%m-%d}.log'.format(datetime.now())))
-    logger.info('Serving on UDP :500 :4500...')
+    msg, extradata = logparser('Serving on UDP :500 :4500...')
+    logger.info(msg, extra=extradata)
     if args.wireguard:
         transport3, _ = loop.run_until_complete(loop.create_datagram_endpoint(lambda: WIREGUARD(args), ('0.0.0.0', args.wireguard)))
         logger.info(f'Serving on UDP :{args.wireguard} (WIREGUARD)...')
@@ -560,7 +583,8 @@ def main():
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        logger.info('exit from Honeypot bye')
+        msg, extradata = logparser('Exit from Honeypot bye')
+        logger.info(msg, extra=extradata)
     for task in asyncio.all_tasks(loop) if hasattr(asyncio, 'all_tasks') else asyncio.Task.all_tasks():
         task.cancel()
     transport1.close()
