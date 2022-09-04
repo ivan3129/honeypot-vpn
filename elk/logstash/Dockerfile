@@ -5,4 +5,4 @@ FROM docker.elastic.co/logstash/logstash:${ELASTIC_VERSION}
 
 # Add your logstash plugins setup here
 # Example: RUN logstash-plugin install logstash-filter-json
-bin/logstash-plugin install logstash-filter-ip2location
+RUN logstash-plugin install logstash-filter-ip2location

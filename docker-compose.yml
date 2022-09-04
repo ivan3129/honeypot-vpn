@@ -76,7 +76,7 @@ services:
 
   honeypotvpn:
     build:
-      context: elk/honeypotvpn_docker_standalone/
+      context: honeypotvpn_docker_standalone/
       args:
         VPN_PASSWORD: ${VPN_PASSWORD}
     volumes:
@@ -85,7 +85,7 @@ services:
       - "500:500/udp"
       - "4500:4500/udp"
     environment:
-      VPN_PASSWORD: ${VPN_PASSWORD:ivan}
+      VPN_PASSWORD: ${VPN_PASSWORD:-ivan}
     command: bash -c "honeypot-vpn -p ${VPN_PASSWORD}"
     networks:
       - elasticnet

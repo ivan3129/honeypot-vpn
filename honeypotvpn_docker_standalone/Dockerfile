@@ -5,11 +5,10 @@ LABEL Maintainer="Ivan Yuquilima"
 WORKDIR /honeypotvpn
 
 
-RUN git clone ivan3129/honeypot-vpn
+RUN git clone https://github.com/ivan3129/honeypot-vpn.git
 
-COPY requirements.txt /tmp/
+WORKDIR honeypot-vpn
 
-RUN pip3 install --upgrade -r /tmp/requirements.txt
 
 RUN python3 setup.py install
 
