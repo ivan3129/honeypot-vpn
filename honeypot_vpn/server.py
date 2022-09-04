@@ -554,14 +554,15 @@ def main():
     parser.add_argument('-dns', dest='dns', default='1.1.1.1', help='dns server (default: 1.1.1.1)')
     parser.add_argument('-nc', dest='nocache', default=None, action='store_true', help='do not cache dns (default: off)')
     parser.add_argument('-wl', dest='writelogs', default='yes', action='store_true', help='write logs into a file yes/no (default: yes)')
-    parser.add_argument('-es', dest='useelasticsearch', default='yes', action='store_true', help='send logs to elastic search (default: yes)')
+    parser.add_argument('-lop', dest='logsoutputpath', default='/honeypotvpn/logs', help='Honeypotvpn output logs (default: /honeypotvpn/logs)')
+    parser.add_argument('-nologstash', dest='nologstash',  action='store_true', help='No send logs lot lostash - Elasticsearch')
     parser.add_argument('-logstash', dest='logstashhost', default='localhost:5000', action='store_true', help='logstash server host:port (default: localhost:5000)')
     parser.add_argument('-v', dest='v', action='count', help='print verbose output')
     parser.add_argument('--version', action='version', version=f'{__title__} {__version__}')
     args = parser.parse_args()
     args.DIRECT = pproxy.DIRECT
     writeFileLogs = args.writelogs == 'yes'
-    sendToElasticSearch = args.useelasticsearch == 'yes'
+    sendToElasticSearch = args.nologstash == False
     logstashHost = None
     if sendToElasticSearch:
     	logstashHost = args.logstashhost

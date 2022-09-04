@@ -1,3 +1,0 @@
-2022-08-05 04:39:37,604 | INFO     | server.py-main[0552] | LOG FILE:/usr/local/lib/python3.10/dist-packages/honeypot_vpn-0.2.5-py3.10.egg/honeypot_vpn/logs/2022-08-05.log
-2022-08-05 04:39:37,604 | INFO     | server.py-main[0553] | Serving on UDP :500 :4500...
-2022-08-05 04:39:42,765 | INFO     | server.py-main[0562] | exit from Honeypot bye

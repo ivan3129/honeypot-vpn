@@ -25,7 +25,7 @@ def logparser( data, **kwargs ):
         extradata['vpn_client_port'] = vpn_client_port
         addExtraData = True
     if vpn_destination_ip is not None:
-        extradata['vpn_destination_ip'] = '200.55.229.135' #vpn_destination_ip
+        extradata['vpn_destination_ip'] = vpn_destination_ip
         addExtraData = True
     if vpn_destination_port is not None:
         extradata['vpn_destination_port'] = vpn_destination_port

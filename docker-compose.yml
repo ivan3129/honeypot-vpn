@@ -1,0 +1,106 @@
+version: '3.7'
+
+services:
+
+  setup:
+    build:
+      context: elk/setup/
+      args:
+        ELASTIC_VERSION: ${ELASTIC_VERSION}
+    init: true
+    volumes:
+      - setupscriptsdata:/state:Z
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
+      LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD:-}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-}
+    networks:
+      - elasticnet
+    depends_on:
+      - elasticsearch
+
+  elasticsearch:
+    build:
+      context: elk/elasticsearch/
+      args:
+        ELASTIC_VERSION: ${ELASTIC_VERSION}
+    volumes:
+      - ./elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
+      - elasticsearchdata:/usr/share/elasticsearch/data:z
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
+      discovery.type: single-node
+    networks:
+      - elasticnet
+
+  logstash:
+    build:
+      context: elk/logstash/
+      args:
+        ELASTIC_VERSION: ${ELASTIC_VERSION}
+    volumes:
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,Z
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
+    ports:
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "6000:6000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: -Xms512m -Xmx512m
+      LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD:-}
+    networks:
+      - elasticnet
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    build:
+      context: elk/kibana/
+      args:
+        ELASTIC_VERSION: ${ELASTIC_VERSION}
+    volumes:
+      - ./kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,Z
+    ports:
+      - "5601:5601"
+    environment:
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-}
+    networks:
+      - elasticnet
+    depends_on:
+      - elasticsearch
+
+  honeypotvpn:
+    build:
+      context: elk/honeypotvpn_docker_standalone/
+      args:
+        VPN_PASSWORD: ${VPN_PASSWORD}
+    volumes:
+      - honeypotvpndata:/honeypotvpn:z
+    ports:
+      - "500:500/udp"
+      - "4500:4500/udp"
+    environment:
+      VPN_PASSWORD: ${VPN_PASSWORD:ivan}
+    command: bash -c "honeypot-vpn -p ${VPN_PASSWORD}"
+    networks:
+      - elasticnet
+    depends_on:
+      - logstash
+
+networks:
+  elasticnet:
+    driver: bridge
+
+volumes:
+  setupscriptsdata:
+    driver: local
+  elasticsearchdata:
+    driver: local
+  honeypotvpndata:
+    driver: local
+

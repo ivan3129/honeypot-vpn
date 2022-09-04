@@ -26,7 +26,6 @@ setup(
     packages            = ['honeypot_vpn'],
     package_data= {
         "honeypot_vpn": [
-        "logs/*",
         "logger.cfg"
         ]
     },
@@ -47,6 +46,7 @@ setup(
     install_requires    = [
         'pycryptodome >= 3.7.2',
         'pproxy >= 2.0.0',
+        'python-logstash >= 0.4.8',
     ],
     entry_points        = {
         'console_scripts': [

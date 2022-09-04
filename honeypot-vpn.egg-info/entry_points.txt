@@ -1,3 +1,0 @@
-[console_scripts]
-honeypot-vpn = honeypot_vpn.server:main
-
