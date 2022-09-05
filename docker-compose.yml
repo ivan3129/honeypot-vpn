@@ -96,7 +96,7 @@ services:
     environment:
       TZ: ${TZ}
       VPN_PASSWORD: ${VPN_PASSWORD:-ivan}
-    command: bash -c "honeypot-vpn -p ${VPN_PASSWORD}"
+    command: bash -c "honeypot-vpn -p ${VPN_PASSWORD} -logstashhost logstash:5000"
     networks:
       - elasticnet
     depends_on:
