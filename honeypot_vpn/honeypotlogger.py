@@ -7,6 +7,8 @@ import sys
 import logstash
 import platform
 import os
+import socket
+import time
 
 class HoneypotLogger:
 
@@ -14,18 +16,38 @@ class HoneypotLogger:
         self.args = args
         
     
+    def wait_for_logstash_connection(self,ip,port):
+        maxattempts = 60
+        attempt = 0
+        while True:
+            try:
+                attempt = attempt + 1
+                if attempt > maxattempts:
+                    print("Can't connect to Logstash at " + ip +":"+ str(port) + " -> Max attempts reached:" + str(maxattempts))
+                    return
+                time.sleep(5)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                socket.setdefaulttimeout(5.0)
+                result = sock.connect_ex((ip,port))
+                if result == 0:
+                    print("Logstash connected to " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
+                    return
+                print("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
+            except socket.error as e:
+                pass
 
     def configureLogger(self, writeFileLogs = True, sendToElasticSearch = False,  logstashHost = 'localhost:5000', folderLogs="/honeypotvpn/logs"):
     	
         log_file_path = path.join(path.dirname(path.abspath(__file__)), 'logger.cfg')
         if not os.path.exists(folderLogs):
-        	os.makedirs(folderLogs)
+            os.makedirs(folderLogs)
         logger = logging.getLogger('HoneypotVPNLogger')
         logger.setLevel(logging.DEBUG)
         if sendToElasticSearch:
             logstashHost = logstashHost.replace("http://","")
             logstashHost = logstashHost.replace("https://","")
             logstashconf = logstashHost.split(":")
+            self.wait_for_logstash_connection(logstashconf[0], int(logstashconf[1]))
             logger.addHandler(logstash.TCPLogstashHandler(logstashconf[0], int(logstashconf[1]), version=1))
             extra = {
                 'elastic_fields': {
