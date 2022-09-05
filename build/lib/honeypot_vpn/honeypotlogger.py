@@ -18,13 +18,15 @@ class HoneypotLogger:
         
     
     def wait_for_logstash_connection(self,ip,port):
-        maxattempts = 60
+        maxattempts = 80
         attempt = 0
         logger = logging.getLogger('HoneypotVPNLogger')
         logger.setLevel(logging.DEBUG)
         while True:
             try:
                 attempt = attempt + 1
+                logger.info("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
+                print("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
                 if attempt > maxattempts:
                     logger.info("Can't connect to Logstash at " + ip +":"+ str(port) + " -> Max attempts reached:" + str(maxattempts))
                     break
@@ -35,9 +37,10 @@ class HoneypotLogger:
                 if result == 0:
                     logger.info("Logstash connected to " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
                     break
-                logger.info("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
+                
             except socket.error as e:
                 logger.info(e)
+                print(e)
                 pass
         logger.addHandler(logstash.TCPLogstashHandler(ip, port, version=1))
         extra = {
