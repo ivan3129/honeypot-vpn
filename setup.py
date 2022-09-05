@@ -47,6 +47,7 @@ setup(
         'pycryptodome >= 3.7.2',
         'pproxy >= 2.0.0',
         'python-logstash >= 0.4.8',
+        'requests >= 2.28.1',
     ],
     entry_points        = {
         'console_scripts': [
