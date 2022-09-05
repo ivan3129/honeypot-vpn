@@ -8,7 +8,6 @@ import logstash
 import platform
 import os
 import socket
-import time
 
 class HoneypotLogger:
 
@@ -27,7 +26,6 @@ class HoneypotLogger:
                 if attempt > maxattempts:
                     logger.info("Can't connect to Logstash at " + ip +":"+ str(port) + " -> Max attempts reached:" + str(maxattempts))
                     return
-                time.sleep(5)
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 socket.setdefaulttimeout(5.0)
                 result = sock.connect_ex((ip,port))
@@ -35,6 +33,7 @@ class HoneypotLogger:
                     logger.info("Logstash connected to " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
                     return
                 logger.info("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
+                print("Waiting for logstash service up at " + ip +":"+ str(port) + " -> Attempt:" + str(attempt))
             except socket.error as e:
                 logger.info(e)
                 pass
