@@ -48,6 +48,7 @@ services:
         ELASTIC_VERSION: ${ELASTIC_VERSION}
         TZ: ${TZ}
     volumes:
+      - ./elk/logstash/ip2locationdatabases:/usr/share/logstash/ip2locationdatabases:ro,Z
       - ./elk/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,Z
       - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
     ports:
@@ -86,7 +87,6 @@ services:
     build:
       context: honeypotvpn_docker_standalone/
       args:
-        VPN_PASSWORD: ${VPN_PASSWORD}
         TZ: ${TZ}
     volumes:
       - honeypotvpndata:/honeypotvpn:z

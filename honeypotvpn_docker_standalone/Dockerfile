@@ -1,3 +1,4 @@
+ARG TZ
 FROM python:latest
 
 LABEL Maintainer="Ivan Yuquilima"
