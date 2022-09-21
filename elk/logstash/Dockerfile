@@ -9,4 +9,4 @@ USER root
 RUN apt-get update && DEBIAN_FRONTEND="noninteractive" TZ=${TZ} apt-get install -y tzdata
 USER logstash
 
-RUN logstash-plugin install logstash-filter-ip2location
+RUN ls
