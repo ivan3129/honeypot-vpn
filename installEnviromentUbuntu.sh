@@ -8,8 +8,7 @@ curl -SL https://github.com/docker/compose/releases/download/v2.3.3/docker-compo
 chmod +x ~/.docker/cli-plugins/docker-compose
 apt-get install docker-compose -y
 echo 'Creating user honeypot'
-useradd –m honeypot
-chsh –s /bin/bash honeypot
+useradd honeypot –m
 echo 'Using user honeypot to start the Honeypot VPN'
 su – honeypot
 echo 'Cloning REPO'
